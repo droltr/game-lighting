@@ -1,0 +1,91 @@
+# Copy this file to ~/.config/game-lighting/config.yaml and edit it.
+
+openrgb:
+  host: 127.0.0.1
+  port: 6742
+
+temperature:
+  interval_seconds: 1.0
+  cold_rgb: [0, 80, 255]     # color at/below cold_at_celsius
+  hot_rgb: [255, 30, 0]      # color at/above hot_at_celsius
+  cold_at_celsius: 40
+  hot_at_celsius: 85
+
+# Reusable key-color snippets, defined once and reused across games below via
+# YAML anchors (&name) and merge keys (<<: *name / <<: [*a, *b]) - plain YAML
+# feature, game_lighting.py doesn't need to know about it. This key
+# ("_shared") is never read by the code; only used here for the anchors.
+_shared:
+  wasd_green: &wasd_green
+    w: [0, 255, 0]
+    a: [0, 255, 0]
+    s: [0, 255, 0]
+    d: [0, 255, 0]
+  # Every other key CS2 actually uses, all one color (red).
+  cs2_rest_red: &cs2_rest_red
+    space: [255, 0, 0]                # jump
+    "left control": [255, 0, 0]       # crouch
+    "left shift": [255, 0, 0]         # walk (slow, quiet footsteps)
+    "1": [255, 0, 0]                  # primary weapon
+    "2": [255, 0, 0]                  # secondary weapon / pistol
+    "3": [255, 0, 0]                  # knife
+    "4": [255, 0, 0]                  # grenade (cycles through carried ones)
+    "5": [255, 0, 0]                  # bomb (C4, when carrying)
+    r: [255, 0, 0]                    # reload
+    q: [255, 0, 0]                    # quick-switch to last weapon
+    g: [255, 0, 0]                    # drop weapon
+    e: [255, 0, 0]                    # use / plant / defuse
+    b: [255, 0, 0]                    # buy menu
+    tab: [255, 0, 0]                  # scoreboard
+    escape: [255, 0, 0]               # game menu
+    y: [255, 0, 0]                    # all chat
+    u: [255, 0, 0]                    # team chat
+    z: [255, 0, 0]                    # radio: group 1 (e.g. "Cover me")
+    x: [255, 0, 0]                    # radio: group 2 (e.g. "Go go go")
+    c: [255, 0, 0]                    # radio: group 3 (e.g. "Affirmative")
+
+# Each key here is an internal name for the game/app; "match" is a list of
+# substrings checked (case-insensitively) against both the focused window's
+# process name and its window class. First match wins.
+#
+# Under "keys", each entry's name is matched case-insensitively against the
+# keyboard's OpenRGB LED names with a "Key: " prefix stripped (e.g. "w" ->
+# "Key: W", "left control" -> "Key: Left Control", "1" -> "Key: 1"). Run
+# `python3 -c "from openrgb import OpenRGBClient; c = OpenRGBClient(protocol_version=3); print([l.name for d in c.devices for l in d.leds if d.type.name == 'KEYBOARD'])"`
+# against a running openrgb-server.service to see the exact LED names for a
+# different keyboard. Multi-word key names need quotes in YAML.
+games:
+  # Counter-Strike 2 (native Linux build, process/window name "cs2").
+  cs2:
+    match:
+      - "cs2"
+    keyboard:
+      # Everything not listed below stays this color while the game is
+      # focused (does NOT react to temperature during game mode).
+      base_rgb: [10, 10, 10]
+      keys:
+        <<: [*wasd_green, *cs2_rest_red]
+    # Optional - omit to leave the mouse on temperature even in game mode.
+    mouse:
+      rgb: [255, 0, 0]
+
+  # Factorio (process/window name "factorio"). Covers the most commonly
+  # used single-key binds; Factorio has many more (some as quickbar items,
+  # some as key combos like Shift+R or Ctrl+C, which a static per-key color
+  # can't represent) - extend as needed.
+  factorio:
+    match:
+      - "factorio"
+    keyboard:
+      base_rgb: [10, 10, 10]
+      keys:
+        <<: *wasd_green
+        e: [255, 255, 255]                # open inventory
+        q: [255, 120, 0]                  # pipette (select clicked entity/tile)
+        r: [255, 120, 0]                  # rotate building (Shift+R: reverse)
+        "1": [0, 200, 255]                # quickbar slot 1
+        "2": [0, 200, 255]                # quickbar slot 2
+        "3": [0, 200, 255]                # quickbar slot 3
+        "4": [0, 200, 255]                # quickbar slot 4
+        "5": [0, 200, 255]                # quickbar slot 5
+        tab: [150, 150, 150]              # toggle zoomed-to-world / map view

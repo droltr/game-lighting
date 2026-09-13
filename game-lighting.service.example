@@ -1,0 +1,22 @@
+# Copy to ~/.config/systemd/user/game-lighting.service, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now game-lighting.service
+#
+# Adjust ExecStart to wherever the venv described in README.md ends up
+# (this project keeps everything permanent under $HOME, not the project
+# drive - see README.md "Permanent install" in the repo root).
+
+[Unit]
+Description=Game-aware RGB lighting (temperature by default, per-game keyboard layout when focused)
+After=openrgb-server.service
+Requires=openrgb-server.service
+
+[Service]
+Type=simple
+Environment=GAME_LIGHTING_CONFIG=%h/.config/game-lighting/config.yaml
+ExecStart=%h/.local/share/game-lighting/venv/bin/python %h/.local/share/game-lighting/game_lighting.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
