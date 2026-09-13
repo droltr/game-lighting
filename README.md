@@ -57,70 +57,72 @@ projects were evaluated and one is reused as-is:
   running here). Its JS source explicitly branches on
   `workspace.windowActivated ?? workspace.clientActivated` to support both
   KDE 6 and KDE 5.
-- **Not yet verified**: an actual live focus-change D-Bus signal firing
-  end-to-end while `game_lighting.py` listens (that needs a window to
-  actually be alt-tabbed to while the script runs interactively — a
-  one-time manual check, see "Next steps").
+- **Focus tracking verified end-to-end, live, with a real game.** While
+  Counter-Strike 2 (native Linux build, process `cs2`) was running and the
+  user alt-tabbed between it and the desktop several times, the service log
+  showed the real sequence: `Game mode ON: cs2 (pname=cs2, class=cs2)` →
+  `Game mode OFF` → `Game mode ON: cs2 ...`, matching every switch. The
+  keyboard's per-key layout was pushed on each `ON` and the temperature loop
+  resumed control on each `OFF`.
+- **CPU temperature reading works** (`sensors -j` parsing for
+  `k10temp`/`coretemp`/`zenpower`) — the temperature loop ran error-free for
+  extended periods driving the motherboard, RAM, keyboard, and mouse.
 
-## What's stubbed / not done yet
+## Bug found and fixed during live testing
 
-- `game_lighting.py` is a working, complete first draft, but has not been
-  run end-to-end yet (no `~/.config/game-lighting/config.yaml` exists,
-  nothing has been installed permanently - see below for why).
-- No installation was performed under `$HOME` (no venv, no
-  `~/.config/systemd/user/game-lighting.service`, FocusNotifier's own
-  listener/`activewindow` CLI was intentionally not installed since it's
-  not needed). Persistent installs of this kind were blocked by the
-  session's permission classifier when run from this research pass
-  ("Unauthorized Persistence") - installing a new autostart service is a
-  standing-permission decision the interactive session/user should make,
-  not something to do unattended from a background research task. The KWin
-  script install (a reversible System Settings-equivalent toggle) went
-  through fine; copying files into `~/.local/bin` and a new systemd unit
-  did not.
-- CPU temperature reading uses `sensors -j` (lm-sensors) parsing for
-  `k10temp`/`coretemp`/`zenpower` - not yet tested against this machine's
-  actual `sensors` output; the reference script
-  (`~/.local/bin/openrgb-thermal-sync.py`, currently disabled) already
-  proved a working temperature-reading approach on this exact host and is
-  worth diffing against before first run.
+The first per-key layout push warned `Unknown keyboard LED name: Key: SPACE`
+— the code built LED names as `f"Key: {key_name.upper()}"`, but this
+keyboard's actual LED name is `Key: Space` (title case), not `Key: SPACE`.
+Single-letter keys (`w` → `W`) happened to work by accident; anything
+multi-character (`space`, `left control`, `escape`, ...) didn't. Fixed by
+matching LED names case-insensitively instead of guessing a casing
+convention. Re-verified live with zero "Unknown keyboard LED name" warnings
+across a 24-key CS2 layout.
 
-## Status: installed and running (temperature mode only)
+## Status: installed, running, and actively used
 
-Done, on this machine:
+Installed on this machine as a permanent systemd `--user` service:
 
-1. Host venv at `~/.local/share/game-lighting/venv` with `openrgb-python`
-   and `pyyaml` installed (no compiled dependencies, so a plain host venv
-   was used instead of the Toolbox).
-2. `game_lighting.py` copied to `~/.local/share/game-lighting/`.
-3. `~/.config/game-lighting/config.yaml` created from
-   `config.example.yaml` (still has the placeholder `example_fps` entry —
-   not a real mapping yet, see open questions).
-4. Verified live against the real running `openrgb-server.service`: SDK
-   connects, all four device types are found (`keyboard=SteelSeries Apex
-   Pro mouse=SteelSeries Rival 5 motherboard=MSI MYSTIC LIGHT dram=2`), and
-   the temperature loop ran error-free driving real hardware.
-5. Installed as `~/.config/systemd/user/game-lighting.service`
+1. Host venv at `~/.local/share/game-lighting/venv` (no compiled
+   dependencies, so a plain host venv is enough — the Toolbox used for
+   OpenRGB itself isn't needed here).
+2. `~/.config/game-lighting/config.yaml` has real mappings for two games —
+   see "Included game layouts" below.
+3. Installed as `~/.config/systemd/user/game-lighting.service`
    (`After=`/`Requires=openrgb-server.service`), `systemctl --user enable
-   --now`d — active and will survive reboot/login.
-6. The old `~/.local/bin/openrgb-thermal-sync.py` +
-   `openrgb-thermal-sync.service` (superseded duplicate) have been removed
-   entirely, not just disabled.
+   --now`d — active, survives reboot/login.
+4. The old standalone `openrgb-thermal-sync.py` +
+   `openrgb-thermal-sync.service` (did only the temperature part, for the
+   whole system rather than per-device) were removed entirely, superseded
+   by this service.
 
-**Not yet verified:** the focus-tracking path end-to-end (FocusNotifier
-D-Bus signal → `Game mode ON: ...` in the log → keyboard actually changes)
-and mouse-in-game-mode, because no real game is mapped in `config.yaml` yet
-— this needs real process names/window classes and colors, which only the
-user can provide.
+## Included game layouts
 
-## Open questions for the user
+`config.example.yaml` ships two real, tested layouts, structured to avoid
+repeating shared key colors across games — a YAML anchor
+(`_shared.wasd_green`, and for CS2, `_shared.cs2_rest_red`) is defined once
+and merged into each game's `keys` map with `<<: *anchor_name` (or
+`<<: [*a, *b]` for more than one). Plain PyYAML feature, no code changes
+needed to add more games without repeating the movement keys every time.
 
-- Which games/processes to map first, and their exact process name or
-  window class (can be read live from the log — run
-  `journalctl --user -u game-lighting.service -f` while the game is
-  focused, or temporarily set the logger to DEBUG to see every focus
-  change with `pname`/`wclass`).
-- Exact highlight colors per game/key (the placeholder config uses green
-  WASD + yellow space).
-- Confirmed: mouse also switches in game mode (user chose this) — each
-  game's `mouse:` block in the config controls it per game.
+- **`cs2`** (matches process `cs2`): WASD green, every other key CS2
+  actually uses (jump, crouch, walk, weapon slots 1-5, reload, quick-switch,
+  drop, use/plant/defuse, buy menu, scoreboard, menu, chat, radio) — all one
+  color, red, per the user's request to keep it simple. Mouse also turns
+  red in game mode.
+- **`factorio`** (matches process `factorio`): WASD green, inventory/pipette/
+  rotate/quickbar-1-5/map-toggle in their own colors — covers the most
+  commonly used single-key binds; Factorio has more (some are quickbar
+  items, some are combos like Shift+R or Ctrl+C that a static per-key color
+  can't represent).
+
+## Adding another game
+
+1. Find the process name: run `journalctl --user -u game-lighting.service -f`
+   while the game is focused (or bump the logger to DEBUG) — focus-change
+   log lines show `pname=... class=...`.
+2. Add a new entry under `games:` in `~/.config/game-lighting/config.yaml`,
+   reusing `<<: *wasd_green` (or defining your own anchor) for shared keys.
+3. Find real LED names for a different keyboard with:
+   `python3 -c "from openrgb import OpenRGBClient; c = OpenRGBClient(protocol_version=3); print([l.name for d in c.devices for l in d.leds if d.type.name == 'KEYBOARD'])"`
+4. `systemctl --user restart game-lighting.service`.
