@@ -102,9 +102,20 @@ def read_cpu_temp_celsius() -> Optional[float]:
 
 
 def temp_to_color(temp_c: Optional[float], cold: RGBColor, hot: RGBColor,
-                   cold_at: float, hot_at: float) -> RGBColor:
+                   cold_at: float, hot_at: float,
+                   stops: Optional[list[tuple[float, RGBColor]]] = None) -> RGBColor:
+    """Map temperature through sorted colour stops, preserving old 2-stop config."""
     if temp_c is None:
         return cold
+    if stops:
+        points = sorted(stops)
+        if temp_c <= points[0][0]:
+            return points[0][1]
+        for (ta, ca), (tb, cb) in zip(points, points[1:]):
+            if temp_c <= tb:
+                ratio = (temp_c - ta) / max(1.0, tb - ta)
+                return RGBColor(*(int(a + (b - a) * ratio) for a, b in zip(ca, cb)))
+        return points[-1][1]
     t = max(0.0, min(1.0, (temp_c - cold_at) / max(1.0, (hot_at - cold_at))))
     r = int(cold.red + (hot.red - cold.red) * t)
     g = int(cold.green + (hot.green - cold.green) * t)
@@ -304,6 +315,7 @@ class GameLighting:
         retry_initial = float(openrgb_cfg.get("retry_initial_seconds", 1.0))
         retry_max = float(openrgb_cfg.get("retry_max_seconds", 30.0))
         retry = retry_initial
+        last_reported = None
 
         while not self.stop_event.is_set():
             if not self._ensure_connected():
@@ -313,7 +325,17 @@ class GameLighting:
             retry = retry_initial
 
             temp = read_cpu_temp_celsius()
-            color = temp_to_color(temp, cold, hot, cold_at, hot_at)
+            configured_stops = temp_cfg.get("color_stops")
+            stops = None
+            if configured_stops:
+                stops = [(float(item["at_celsius"]), RGBColor(*item["rgb"])) for item in configured_stops]
+            color = temp_to_color(temp, cold, hot, cold_at, hot_at, stops)
+            report = (temp, color.red, color.green, color.blue)
+            if report != last_reported:
+                LOG.info("Temperature pipeline: sensor=%s°C -> RGB=(%d,%d,%d) -> devices=%d",
+                         "unavailable" if temp is None else f"{temp:.1f}", color.red, color.green,
+                         color.blue, len(self.temperature_devices))
+                last_reported = report
 
             try:
                 with self.client_lock:
