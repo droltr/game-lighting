@@ -3,6 +3,17 @@
 openrgb:
   host: 127.0.0.1
   port: 6742
+  discovery_timeout_seconds: 20
+  discovery_poll_seconds: 0.5
+  retry_initial_seconds: 1
+  retry_max_seconds: 30
+  # Wait until the complete expected inventory is visible. Adjust counts for
+  # the machine; omit a type that is intentionally absent.
+  required_device_counts:
+    motherboard: 1
+    dram: 2
+    keyboard: 1
+    mouse: 1
 
 temperature:
   interval_seconds: 1.0

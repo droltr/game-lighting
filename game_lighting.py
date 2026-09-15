@@ -115,20 +115,90 @@ def temp_to_color(temp_c: Optional[float], cold: RGBColor, hot: RGBColor,
 class GameLighting:
     def __init__(self, config: dict):
         self.config = config
-        self.client = OpenRGBClient(
-            address=config.get("openrgb", {}).get("host", "127.0.0.1"),
-            port=config.get("openrgb", {}).get("port", 6742),
-            name="game-lighting",
-            protocol_version=3,
-        )
         self.lock = threading.Lock()
+        self.client_lock = threading.RLock()
         self.active_game: Optional[str] = None
         self.stop_event = threading.Event()
+        self.client = None
+        self.keyboard = None
+        self.mouse = None
+        self.motherboard = None
+        self.dram = []
+        self.context_needs_apply = False
 
+        self._ensure_connected()
+
+    def _required_device_counts(self) -> dict[DeviceType, int]:
+        configured = self.config.get("openrgb", {}).get("required_device_counts", {})
+        names = {
+            "keyboard": DeviceType.KEYBOARD,
+            "mouse": DeviceType.MOUSE,
+            "motherboard": DeviceType.MOTHERBOARD,
+            "dram": DeviceType.DRAM,
+        }
+        return {
+            names[name]: int(count)
+            for name, count in configured.items()
+            if name in names and int(count) > 0
+        }
+
+    def _inventory_is_ready(self) -> bool:
+        required = self._required_device_counts()
+        return all(
+            sum(
+                device is not None and device.type == device_type
+                for device in self.client.devices
+            ) >= count
+            for device_type, count in required.items()
+        )
+
+    def _refresh_devices(self):
         self.keyboard = self._find_device(DeviceType.KEYBOARD)
         self.mouse = self._find_device(DeviceType.MOUSE)
         self.motherboard = self._find_device(DeviceType.MOTHERBOARD)
-        self.dram = [d for d in self.client.devices if d.type == DeviceType.DRAM]
+        self.dram = [
+            d for d in self.client.devices
+            if d is not None and d.type == DeviceType.DRAM
+        ]
+
+    def _connect_once(self):
+        openrgb_cfg = self.config.get("openrgb", {})
+        client = OpenRGBClient(
+            address=openrgb_cfg.get("host", "127.0.0.1"),
+            port=openrgb_cfg.get("port", 6742),
+            name="game-lighting",
+            protocol_version=3,
+        )
+
+        timeout = float(openrgb_cfg.get("discovery_timeout_seconds", 20.0))
+        poll = float(openrgb_cfg.get("discovery_poll_seconds", 0.5))
+        deadline = time.monotonic() + timeout
+
+        try:
+            self.client = client
+            self._refresh_devices()
+            while not self._inventory_is_ready():
+                if self.stop_event.is_set() or time.monotonic() >= deadline:
+                    counts = {
+                        device_type.name.lower(): sum(
+                            device is not None and device.type == device_type
+                            for device in client.devices
+                        )
+                        for device_type in self._required_device_counts()
+                    }
+                    raise RuntimeError(
+                        f"device discovery timed out; observed counts={counts}"
+                    )
+                self.stop_event.wait(poll)
+                client.update()
+                self._refresh_devices()
+        except Exception:
+            self.client = None
+            try:
+                client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
         LOG.info(
             "Devices: keyboard=%s mouse=%s motherboard=%s dram=%d",
@@ -137,10 +207,48 @@ class GameLighting:
             self.motherboard.name if self.motherboard else None,
             len(self.dram),
         )
+        self.context_needs_apply = True
+
+    @staticmethod
+    def _error_text(exc: Exception) -> str:
+        detail = str(exc).strip()
+        return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+    def _ensure_connected(self) -> bool:
+        with self.client_lock:
+            if self.client is not None:
+                return True
+            try:
+                self._connect_once()
+                return True
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("OpenRGB connection unavailable: %s", self._error_text(exc))
+                return False
+
+    def _drop_connection(self, operation: str, exc: Exception):
+        with self.client_lock:
+            LOG.warning(
+                "OpenRGB %s failed; reconnecting: %s",
+                operation,
+                self._error_text(exc),
+            )
+            client = self.client
+            self.client = None
+            self.keyboard = None
+            self.mouse = None
+            self.motherboard = None
+            self.dram = []
+            if client is not None:
+                try:
+                    client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _find_device(self, device_type: DeviceType):
+        if self.client is None:
+            return None
         for d in self.client.devices:
-            if d.type == device_type:
+            if d is not None and d.type == device_type:
                 return d
         return None
 
@@ -155,37 +263,46 @@ class GameLighting:
         cold_at = float(temp_cfg.get("cold_at_celsius", 40))
         hot_at = float(temp_cfg.get("hot_at_celsius", 85))
         interval = float(temp_cfg.get("interval_seconds", 1.0))
+        openrgb_cfg = self.config.get("openrgb", {})
+        retry_initial = float(openrgb_cfg.get("retry_initial_seconds", 1.0))
+        retry_max = float(openrgb_cfg.get("retry_max_seconds", 30.0))
+        retry = retry_initial
 
         while not self.stop_event.is_set():
+            if not self._ensure_connected():
+                self.stop_event.wait(retry)
+                retry = min(retry_max, retry * 2)
+                continue
+            retry = retry_initial
+
             temp = read_cpu_temp_celsius()
             color = temp_to_color(temp, cold, hot, cold_at, hot_at)
 
-            if self.motherboard is not None:
-                try:
-                    self.motherboard.set_color(color)
-                except Exception as exc:  # noqa: BLE001
-                    LOG.warning("Failed to set motherboard color: %s", exc)
+            try:
+                with self.client_lock:
+                    if self.motherboard is not None:
+                        self.motherboard.set_color(color)
 
-            for dram_dev in self.dram:
-                try:
-                    dram_dev.set_color(color)
-                except Exception as exc:  # noqa: BLE001
-                    LOG.warning("Failed to set DRAM color: %s", exc)
+                    for dram_dev in self.dram:
+                        dram_dev.set_color(color)
 
-            with self.lock:
-                game_active = self.active_game is not None
+                    with self.lock:
+                        game_active = self.active_game is not None
+                        active_game = self.active_game
 
-            if not game_active:
-                if self.keyboard is not None:
-                    try:
-                        self.keyboard.set_color(color)
-                    except Exception as exc:  # noqa: BLE001
-                        LOG.warning("Failed to set keyboard color: %s", exc)
-                if self.mouse is not None:
-                    try:
-                        self.mouse.set_color(color)
-                    except Exception as exc:  # noqa: BLE001
-                        LOG.warning("Failed to set mouse color: %s", exc)
+                    if game_active and self.context_needs_apply:
+                        game_cfg = self.config.get("games", {}).get(active_game)
+                        if game_cfg is not None:
+                            self._apply_game_layout(game_cfg)
+                            self.context_needs_apply = self.client is None
+                    elif not game_active:
+                        if self.keyboard is not None:
+                            self.keyboard.set_color(color)
+                        if self.mouse is not None:
+                            self.mouse.set_color(color)
+                        self.context_needs_apply = False
+            except Exception as exc:  # noqa: BLE001
+                self._drop_connection("temperature update", exc)
 
             self.stop_event.wait(interval)
 
@@ -247,7 +364,7 @@ class GameLighting:
             # Temperature loop will repaint keyboard/mouse on its next tick.
 
     def _apply_game_layout(self, game_cfg: dict):
-        if self.keyboard is None:
+        if self.keyboard is None or not self._ensure_connected():
             return
         keyboard_layout = game_cfg.get("keyboard", {})
         base_color = RGBColor(*keyboard_layout.get("base_rgb", [0, 0, 0]))
@@ -267,16 +384,13 @@ class GameLighting:
             colors[idx] = RGBColor(*rgb)
 
         try:
-            self.keyboard.set_colors(colors)
+            with self.client_lock:
+                self.keyboard.set_colors(colors)
+                mouse_cfg = game_cfg.get("mouse")
+                if mouse_cfg is not None and self.mouse is not None:
+                    self.mouse.set_color(RGBColor(*mouse_cfg.get("rgb", [0, 0, 0])))
         except Exception as exc:  # noqa: BLE001
-            LOG.warning("Failed to apply game keyboard layout: %s", exc)
-
-        mouse_cfg = game_cfg.get("mouse")
-        if mouse_cfg is not None and self.mouse is not None:
-            try:
-                self.mouse.set_color(RGBColor(*mouse_cfg.get("rgb", [0, 0, 0])))
-            except Exception as exc:  # noqa: BLE001
-                LOG.warning("Failed to apply game mouse color: %s", exc)
+            self._drop_connection("game layout update", exc)
 
     def run(self):
         threads = [
@@ -298,7 +412,8 @@ class GameLighting:
 
         for t in threads:
             t.join(timeout=5)
-        self.client.disconnect()
+        if self.client is not None:
+            self.client.disconnect()
 
 
 def main():

@@ -68,6 +68,13 @@ projects were evaluated and one is reused as-is:
   `k10temp`/`coretemp`/`zenpower`) — the temperature loop ran error-free for
   extended periods driving the motherboard, RAM, keyboard, and mouse.
 
+The service also treats SDK availability as transient. It waits for the
+configured minimum device inventory, reconnects with bounded exponential
+backoff after a socket or protocol failure, and rebuilds all device references
+after reconnecting. Configure `openrgb.required_device_counts` to prevent an
+early connection from permanently missing devices that OpenRGB is still
+discovering.
+
 ## Bug found and fixed during live testing
 
 The first per-key layout push warned `Unknown keyboard LED name: Key: SPACE`
