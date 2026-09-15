@@ -114,7 +114,11 @@ def temp_to_color(temp_c: Optional[float], cold: RGBColor, hot: RGBColor,
         for (ta, ca), (tb, cb) in zip(points, points[1:]):
             if temp_c <= tb:
                 ratio = (temp_c - ta) / max(1.0, tb - ta)
-                return RGBColor(*(int(a + (b - a) * ratio) for a, b in zip(ca, cb)))
+                return RGBColor(
+                    int(ca.red + (cb.red - ca.red) * ratio),
+                    int(ca.green + (cb.green - ca.green) * ratio),
+                    int(ca.blue + (cb.blue - ca.blue) * ratio),
+                )
         return points[-1][1]
     t = max(0.0, min(1.0, (temp_c - cold_at) / max(1.0, (hot_at - cold_at))))
     r = int(cold.red + (hot.red - cold.red) * t)
