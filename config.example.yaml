@@ -25,6 +25,31 @@ temperature:
   cold_at_celsius: 40
   hot_at_celsius: 85
 
+# Keyboard and mouse briefly show the current temperature color when the
+# focused context changes, then settle on the selected desktop/game layout.
+transition:
+  duration_seconds: 0.2
+
+# Coding-oriented fallback for the desktop and unmapped applications.
+# Motherboard and DRAM continue following CPU temperature independently.
+desktop:
+  keyboard:
+    base_rgb: [8, 12, 24]
+    keys:
+      escape: [180, 40, 40]
+      tab: [120, 80, 255]
+      "left control": [0, 180, 255]
+      "left shift": [0, 120, 255]
+      space: [80, 140, 180]
+      enter: [0, 220, 140]
+      backspace: [255, 120, 40]
+      up: [0, 200, 255]
+      down: [0, 200, 255]
+      left: [0, 200, 255]
+      right: [0, 200, 255]
+  mouse:
+    rgb: [20, 80, 140]
+
 # Reusable key-color snippets, defined once and reused across games below via
 # YAML anchors (&name) and merge keys (<<: *name / <<: [*a, *b]) - plain YAML
 # feature, game_lighting.py doesn't need to know about it. This key
