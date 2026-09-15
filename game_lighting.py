@@ -410,7 +410,9 @@ class GameLighting:
                     elif line == "§end":
                         self._on_focus_change(pending)
                         pending = {}
-                if not self.stop_event.is_set():
+                returncode = proc.poll()
+                shutting_down = returncode in (-signal.SIGTERM, -signal.SIGKILL)
+                if not self.stop_event.is_set() and not shutting_down:
                     LOG.warning("Focus monitor exited; restarting")
             except OSError as exc:
                 LOG.warning("Focus monitor unavailable: %s", self._error_text(exc))
