@@ -17,6 +17,9 @@ openrgb:
 
 temperature:
   interval_seconds: 1.0
+  # OpenRGB effects such as Rainbow ignore direct per-LED color updates.
+  # Select Direct once after discovery/reconnection; never save it to firmware.
+  device_mode: Direct
   cold_rgb: [0, 80, 255]     # color at/below cold_at_celsius
   hot_rgb: [255, 30, 0]      # color at/above hot_at_celsius
   cold_at_celsius: 40

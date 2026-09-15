@@ -124,6 +124,7 @@ class GameLighting:
         self.mouse = None
         self.motherboard = None
         self.dram = []
+        self.temperature_devices = []
         self.context_needs_apply = False
 
         self._ensure_connected()
@@ -207,7 +208,41 @@ class GameLighting:
             self.motherboard.name if self.motherboard else None,
             len(self.dram),
         )
+        self._prepare_temperature_devices()
         self.context_needs_apply = True
+
+    def _prepare_temperature_devices(self):
+        devices = [d for d in [self.motherboard, *self.dram] if d is not None]
+        desired_mode = self.config.get("temperature", {}).get("device_mode")
+        self.temperature_devices = []
+
+        for device in devices:
+            if not desired_mode:
+                self.temperature_devices.append(device)
+                continue
+
+            matching_mode = next(
+                (mode for mode in device.modes if mode.name.lower() == desired_mode.lower()),
+                None,
+            )
+            if matching_mode is None:
+                LOG.warning(
+                    "Skipping temperature control for %s: mode %r is unavailable",
+                    device.name,
+                    desired_mode,
+                )
+                continue
+
+            active_mode = device.modes[device.active_mode]
+            if active_mode.name.lower() != matching_mode.name.lower():
+                LOG.info(
+                    "Switching %s from %s to %s mode for temperature control",
+                    device.name,
+                    active_mode.name,
+                    matching_mode.name,
+                )
+                device.set_mode(matching_mode.name, save=False)
+            self.temperature_devices.append(device)
 
     @staticmethod
     def _error_text(exc: Exception) -> str:
@@ -238,6 +273,7 @@ class GameLighting:
             self.mouse = None
             self.motherboard = None
             self.dram = []
+            self.temperature_devices = []
             if client is not None:
                 try:
                     client.disconnect()
@@ -280,11 +316,8 @@ class GameLighting:
 
             try:
                 with self.client_lock:
-                    if self.motherboard is not None:
-                        self.motherboard.set_color(color)
-
-                    for dram_dev in self.dram:
-                        dram_dev.set_color(color)
+                    for device in self.temperature_devices:
+                        device.set_color(color)
 
                     with self.lock:
                         game_active = self.active_game is not None

@@ -24,12 +24,20 @@ class FakeLed:
 
 
 class FakeDevice:
-    def __init__(self, device_type, name, leds=None):
+    def __init__(self, device_type, name, leds=None, modes=None, active_mode=0):
         self.type = device_type
         self.name = name
         self.leds = leds or []
+        self.modes = modes or []
+        self.active_mode = active_mode
         self.set_color = MagicMock()
         self.set_colors = MagicMock()
+        self.set_mode = MagicMock()
+
+
+class FakeMode:
+    def __init__(self, name: str):
+        self.name = name
 
 
 class TempToColorTests(unittest.TestCase):
@@ -211,6 +219,57 @@ class ConnectionRecoveryTests(unittest.TestCase):
         self.assertIsNone(lighting.client)
         client.disconnect.assert_called_once()
         self.assertIn("ConnectionResetError", "\n".join(logs.output))
+
+
+class TemperatureDeviceModeTests(unittest.TestCase):
+    def _lighting(self, device):
+        config = {
+            "openrgb": {"host": "127.0.0.1", "port": 6742},
+            "temperature": {"device_mode": "Direct"},
+            "games": {},
+        }
+        client = MagicMock()
+        client.devices = [device]
+        with patch.object(game_lighting, "OpenRGBClient", return_value=client):
+            return game_lighting.GameLighting(config)
+
+    def test_rainbow_dram_switches_to_direct_without_saving(self):
+        dram = FakeDevice(
+            DeviceType.DRAM,
+            "DRAM",
+            modes=[FakeMode("Direct"), FakeMode("Rainbow")],
+            active_mode=1,
+        )
+
+        lighting = self._lighting(dram)
+
+        dram.set_mode.assert_called_once_with("Direct", save=False)
+        self.assertEqual(lighting.temperature_devices, [dram])
+
+    def test_already_direct_device_does_not_switch_mode(self):
+        motherboard = FakeDevice(
+            DeviceType.MOTHERBOARD,
+            "Motherboard",
+            modes=[FakeMode("Direct")],
+        )
+
+        lighting = self._lighting(motherboard)
+
+        motherboard.set_mode.assert_not_called()
+        self.assertEqual(lighting.temperature_devices, [motherboard])
+
+    def test_device_without_direct_mode_is_skipped(self):
+        dram = FakeDevice(
+            DeviceType.DRAM,
+            "DRAM",
+            modes=[FakeMode("Rainbow")],
+        )
+
+        with self.assertLogs("game-lighting", level="WARNING") as logs:
+            lighting = self._lighting(dram)
+
+        self.assertEqual(lighting.temperature_devices, [])
+        self.assertIn("mode 'Direct' is unavailable", "\n".join(logs.output))
 
 
 if __name__ == "__main__":
