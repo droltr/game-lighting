@@ -26,10 +26,10 @@ temperature:
   hot_at_celsius: 85
   # Smoothly interpolate through blue -> yellow -> orange -> red.
   color_stops:
-    - {at_celsius: 35, rgb: [0, 80, 255]}
-    - {at_celsius: 55, rgb: [255, 220, 0]}
-    - {at_celsius: 70, rgb: [255, 110, 0]}
-    - {at_celsius: 85, rgb: [255, 0, 0]}
+    - {at_celsius: 40, rgb: [0, 80, 255]}
+    - {at_celsius: 65, rgb: [255, 220, 0]}
+    - {at_celsius: 85, rgb: [255, 110, 0]}
+    - {at_celsius: 95, rgb: [255, 0, 0]}
 
 # Keyboard and mouse briefly show the current temperature color when the
 # focused context changes, then settle on the selected desktop/game layout.
