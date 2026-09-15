@@ -75,6 +75,12 @@ after reconnecting. Configure `openrgb.required_device_counts` to prevent an
 early connection from permanently missing devices that OpenRGB is still
 discovering.
 
+Temperature-managed devices are switched to the configured `Direct` mode once
+after discovery or reconnection, with `save=False`. This is necessary for DRAM
+devices that otherwise remain in a firmware effect such as `Rainbow`, where a
+plain SDK color call can be ignored without reporting an error. Devices that
+do not advertise the configured mode are skipped with a warning.
+
 ## Bug found and fixed during live testing
 
 The first per-key layout push warned `Unknown keyboard LED name: Key: SPACE`
