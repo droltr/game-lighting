@@ -157,3 +157,13 @@ Run `./health-check.sh` to validate the startup chain without printing serials
 or raw hardware identifiers. Exit codes are 0 (healthy), 1 (warning), and 2
 (error). The report separates OpenRGB service/process/SDK, CPU sensor,
 orchestrator, and udev ownership failures.
+
+## Compatibility case: AMD X3D + Mystic Light
+
+The reference machine uses an AMD Ryzen 7 9800X3D (AMD TjMax 95°C) with an
+MSI Mystic Light motherboard and two DRAM devices. These are example findings,
+not hard-coded requirements: sensors and OpenRGB device types are discovered at
+runtime. The case established four-stop temperature thresholds, Direct mode
+for motherboard/DRAM, and a single package-owned udev rule. Static OpenRGB
+effects remain disabled for temperature-managed devices. Unsupported optional
+devices, such as a possible GPU LED, are warnings and never break the core.
