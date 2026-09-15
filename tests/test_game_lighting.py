@@ -146,5 +146,72 @@ class FocusChangeTests(unittest.TestCase):
         keyboard.set_colors.assert_called_once()
 
 
+class ConnectionRecoveryTests(unittest.TestCase):
+    def _config(self, **openrgb):
+        return {
+            "openrgb": {
+                "host": "127.0.0.1",
+                "port": 6742,
+                "discovery_poll_seconds": 0,
+                **openrgb,
+            },
+            "games": {},
+        }
+
+    def test_initial_connection_failure_is_retried(self):
+        client = MagicMock()
+        client.devices = []
+
+        with patch.object(
+            game_lighting,
+            "OpenRGBClient",
+            side_effect=[ConnectionRefusedError(), client],
+        ):
+            with self.assertLogs("game-lighting", level="WARNING") as logs:
+                lighting = game_lighting.GameLighting(self._config())
+            self.assertIsNone(lighting.client)
+            self.assertIn("ConnectionRefusedError", "\n".join(logs.output))
+
+            self.assertTrue(lighting._ensure_connected())
+            self.assertIs(lighting.client, client)
+
+    def test_discovery_waits_for_required_dram(self):
+        client = MagicMock()
+        keyboard = FakeDevice(DeviceType.KEYBOARD, "Keyboard")
+        dram_a = FakeDevice(DeviceType.DRAM, "DRAM A")
+        dram_b = FakeDevice(DeviceType.DRAM, "DRAM B")
+        client.devices = [keyboard]
+
+        def finish_discovery():
+            client.devices = [keyboard, dram_a, dram_b]
+
+        client.update.side_effect = finish_discovery
+
+        with patch.object(game_lighting, "OpenRGBClient", return_value=client):
+            lighting = game_lighting.GameLighting(
+                self._config(
+                    discovery_timeout_seconds=1,
+                    required_device_counts={"keyboard": 1, "dram": 2},
+                )
+            )
+
+        client.update.assert_called_once()
+        self.assertEqual(lighting.dram, [dram_a, dram_b])
+
+    def test_write_failure_drops_client_for_reconnection(self):
+        client = MagicMock()
+        client.devices = []
+
+        with patch.object(game_lighting, "OpenRGBClient", return_value=client):
+            lighting = game_lighting.GameLighting(self._config())
+
+        with self.assertLogs("game-lighting", level="WARNING") as logs:
+            lighting._drop_connection("temperature update", ConnectionResetError())
+
+        self.assertIsNone(lighting.client)
+        client.disconnect.assert_called_once()
+        self.assertIn("ConnectionResetError", "\n".join(logs.output))
+
+
 if __name__ == "__main__":
     unittest.main()
