@@ -272,5 +272,79 @@ class TemperatureDeviceModeTests(unittest.TestCase):
         self.assertIn("mode 'Direct' is unavailable", "\n".join(logs.output))
 
 
+class ContextProfileTests(unittest.TestCase):
+    def _make_lighting(self):
+        config = {
+            "openrgb": {"host": "127.0.0.1", "port": 6742},
+            "temperature": {"cold_rgb": [1, 2, 3], "hot_rgb": [255, 0, 0]},
+            "transition": {"duration_seconds": 0},
+            "desktop": {
+                "keyboard": {
+                    "base_rgb": [8, 12, 24],
+                    "keys": {"enter (iso)": [0, 220, 140]},
+                },
+                "mouse": {"rgb": [20, 80, 140]},
+            },
+            "games": {
+                "example_fps": {
+                    "match": ["cs2"],
+                    "keyboard": {
+                        "base_rgb": [10, 10, 10],
+                        "keys": {"w": [0, 255, 0]},
+                    },
+                }
+            },
+        }
+        keyboard = FakeDevice(
+            DeviceType.KEYBOARD,
+            "Keyboard",
+            leds=[FakeLed("Key: W"), FakeLed("Key: Enter (ISO)")],
+        )
+        mouse = FakeDevice(DeviceType.MOUSE, "Mouse")
+        client = MagicMock()
+        client.devices = [keyboard, mouse]
+        with patch.object(game_lighting, "OpenRGBClient", return_value=client):
+            lighting = game_lighting.GameLighting(config)
+        return lighting, keyboard, mouse
+
+    @patch.object(game_lighting, "read_cpu_temp_celsius", return_value=40)
+    def test_initial_desktop_focus_applies_transition_then_coding_layout(self, _temp):
+        lighting, keyboard, mouse = self._make_lighting()
+
+        lighting._on_focus_change({})
+
+        self.assertTrue(lighting.context_initialized)
+        self.assertIsNone(lighting.active_game)
+        keyboard.set_color.assert_called_once()
+        keyboard.set_colors.assert_called_once()
+        self.assertEqual(mouse.set_color.call_count, 2)
+
+    @patch.object(game_lighting, "read_cpu_temp_celsius", return_value=40)
+    def test_game_exit_returns_to_desktop_layout(self, _temp):
+        lighting, keyboard, _mouse = self._make_lighting()
+        lighting._on_focus_change({"pname": "cs2", "wclass": "cs2"})
+        keyboard.set_colors.reset_mock()
+
+        lighting._on_focus_change({"pname": "code", "wclass": "code"})
+
+        self.assertIsNone(lighting.active_game)
+        keyboard.set_colors.assert_called_once()
+
+    @patch.object(game_lighting.subprocess, "run")
+    def test_initial_focus_reads_xwayland_process_and_class(self, run):
+        run.side_effect = [
+            MagicMock(stdout="100\n"),
+            MagicMock(stdout="4242\n"),
+            MagicMock(stdout="cs2\n"),
+            MagicMock(stdout="cs2\n"),
+        ]
+        lighting, _keyboard, _mouse = self._make_lighting()
+
+        self.assertEqual(
+            lighting._read_initial_focus(),
+            {"pname": "cs2", "wclass": "cs2"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

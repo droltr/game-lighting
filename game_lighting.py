@@ -118,6 +118,7 @@ class GameLighting:
         self.lock = threading.Lock()
         self.client_lock = threading.RLock()
         self.active_game: Optional[str] = None
+        self.context_initialized = False
         self.stop_event = threading.Event()
         self.client = None
         self.keyboard = None
@@ -322,13 +323,19 @@ class GameLighting:
                     with self.lock:
                         game_active = self.active_game is not None
                         active_game = self.active_game
+                    desktop_managed = bool(self.config.get("desktop"))
 
                     if game_active and self.context_needs_apply:
                         game_cfg = self.config.get("games", {}).get(active_game)
                         if game_cfg is not None:
-                            self._apply_game_layout(game_cfg)
+                            self._apply_context_layout(game_cfg, transition=False)
                             self.context_needs_apply = self.client is None
-                    elif not game_active:
+                    elif desktop_managed and self.context_needs_apply:
+                        self._apply_context_layout(
+                            self.config.get("desktop", {}), transition=False
+                        )
+                        self.context_needs_apply = self.client is None
+                    elif not game_active and not desktop_managed:
                         if self.keyboard is not None:
                             self.keyboard.set_color(color)
                         if self.mouse is not None:
@@ -344,28 +351,79 @@ class GameLighting:
     # listener script parses, without requiring that listener to be
     # installed - only its KWin script needs to be installed and enabled.
     # ------------------------------------------------------------------ #
-    def focus_loop(self):
-        proc = subprocess.Popen(
-            ["dbus-monitor", DBUS_MATCH],
-            stdout=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-        pending = {}
+    def _read_initial_focus(self) -> dict:
+        """Best-effort initial focus query for XWayland windows on KDE."""
         try:
-            for line in proc.stdout:
-                if self.stop_event.is_set():
-                    break
-                line = line.strip()
-                match = re.match(r"§(\w+):\s*(.*)", line)
-                if match:
-                    key, value = match.group(1), match.group(2).strip()
-                    pending[key] = value
-                elif line == "§end":
-                    self._on_focus_change(pending)
-                    pending = {}
-        finally:
-            proc.terminate()
+            window_id = subprocess.run(
+                ["xdotool", "getactivewindow"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            ).stdout.strip()
+            pid = subprocess.run(
+                ["xdotool", "getwindowpid", window_id],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            ).stdout.strip()
+            wclass = subprocess.run(
+                ["xdotool", "getwindowclassname", window_id],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            ).stdout.strip()
+            pname = subprocess.run(
+                ["ps", "-p", pid, "-o", "comm="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            ).stdout.strip()
+            return {"pname": pname, "wclass": wclass}
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return {}
+
+    def focus_loop(self):
+        retry = 1.0
+        while not self.stop_event.is_set():
+            proc = None
+            try:
+                proc = subprocess.Popen(
+                    ["dbus-monitor", DBUS_MATCH],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                )
+                self._on_focus_change(self._read_initial_focus())
+                pending = {}
+                for line in proc.stdout:
+                    if self.stop_event.is_set():
+                        break
+                    line = line.strip()
+                    match = re.match(r"§(\w+):\s*(.*)", line)
+                    if match:
+                        key, value = match.group(1), match.group(2).strip()
+                        pending[key] = value
+                    elif line == "§end":
+                        self._on_focus_change(pending)
+                        pending = {}
+                returncode = proc.poll()
+                shutting_down = returncode in (-signal.SIGTERM, -signal.SIGKILL)
+                if not self.stop_event.is_set() and not shutting_down:
+                    LOG.warning("Focus monitor exited; restarting")
+            except OSError as exc:
+                LOG.warning("Focus monitor unavailable: %s", self._error_text(exc))
+            finally:
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+            self.stop_event.wait(retry)
 
     def _on_focus_change(self, info: dict):
         pname = info.get("pname", "") or info.get("wname", "")
@@ -386,44 +444,75 @@ class GameLighting:
             previously_active = self.active_game
             self.active_game = matched_name
 
-        if matched_name == previously_active:
+        if matched_name == previously_active and self.context_initialized:
             return
+
+        self.context_initialized = True
 
         if matched_name is not None:
             LOG.info("Game mode ON: %s (pname=%s, class=%s)", matched_name, pname, wclass)
             self._apply_game_layout(matched_cfg)
         else:
             LOG.info("Game mode OFF (was: %s)", previously_active)
-            # Temperature loop will repaint keyboard/mouse on its next tick.
+            desktop_cfg = self.config.get("desktop")
+            if desktop_cfg:
+                self._apply_context_layout(desktop_cfg)
+            # Without a desktop profile, the temperature loop retains the
+            # original behavior and repaints keyboard/mouse on its next tick.
 
-    def _apply_game_layout(self, game_cfg: dict):
-        if self.keyboard is None or not self._ensure_connected():
+    def _temperature_color(self) -> RGBColor:
+        temp_cfg = self.config.get("temperature", {})
+        return temp_to_color(
+            read_cpu_temp_celsius(),
+            RGBColor(*temp_cfg.get("cold_rgb", [0, 80, 255])),
+            RGBColor(*temp_cfg.get("hot_rgb", [255, 30, 0])),
+            float(temp_cfg.get("cold_at_celsius", 40)),
+            float(temp_cfg.get("hot_at_celsius", 85)),
+        )
+
+    def _apply_context_layout(self, context_cfg: dict, transition: bool = True):
+        if not self._ensure_connected():
+            self.context_needs_apply = True
             return
-        keyboard_layout = game_cfg.get("keyboard", {})
-        base_color = RGBColor(*keyboard_layout.get("base_rgb", [0, 0, 0]))
-        colors = [base_color] * len(self.keyboard.leds)
-
-        # LED naming case varies by key (e.g. "Key: W" vs "Key: Space"), so
-        # match case-insensitively instead of guessing a casing convention.
-        led_index_by_name = {
-            led.name.lower(): i for i, led in enumerate(self.keyboard.leds)
-        }
-        for key_name, rgb in keyboard_layout.get("keys", {}).items():
-            led_name = f"key: {key_name.lower()}"
-            idx = led_index_by_name.get(led_name)
-            if idx is None:
-                LOG.warning("Unknown keyboard LED name: %s", led_name)
-                continue
-            colors[idx] = RGBColor(*rgb)
 
         try:
             with self.client_lock:
-                self.keyboard.set_colors(colors)
-                mouse_cfg = game_cfg.get("mouse")
+                transition_cfg = self.config.get("transition")
+                if transition and transition_cfg:
+                    color = self._temperature_color()
+                    if self.keyboard is not None:
+                        self.keyboard.set_color(color)
+                    if self.mouse is not None:
+                        self.mouse.set_color(color)
+                    delay = float(transition_cfg.get("duration_seconds", 0.2))
+                    self.stop_event.wait(max(0.0, delay))
+
+                keyboard_layout = context_cfg.get("keyboard", {})
+                if self.keyboard is not None and keyboard_layout:
+                    base_color = RGBColor(*keyboard_layout.get("base_rgb", [0, 0, 0]))
+                    colors = [base_color] * len(self.keyboard.leds)
+                    led_index_by_name = {
+                        led.name.lower(): i for i, led in enumerate(self.keyboard.leds)
+                    }
+                    for key_name, rgb in keyboard_layout.get("keys", {}).items():
+                        led_name = f"key: {key_name.lower()}"
+                        idx = led_index_by_name.get(led_name)
+                        if idx is None:
+                            LOG.warning("Unknown keyboard LED name: %s", led_name)
+                            continue
+                        colors[idx] = RGBColor(*rgb)
+                    self.keyboard.set_colors(colors)
+
+                mouse_cfg = context_cfg.get("mouse")
                 if mouse_cfg is not None and self.mouse is not None:
                     self.mouse.set_color(RGBColor(*mouse_cfg.get("rgb", [0, 0, 0])))
+                self.context_needs_apply = False
         except Exception as exc:  # noqa: BLE001
-            self._drop_connection("game layout update", exc)
+            self.context_needs_apply = True
+            self._drop_connection("context layout update", exc)
+
+    def _apply_game_layout(self, game_cfg: dict):
+        self._apply_context_layout(game_cfg)
 
     def run(self):
         threads = [

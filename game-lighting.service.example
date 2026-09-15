@@ -7,7 +7,7 @@
 # drive - see README.md "Permanent install" in the repo root).
 
 [Unit]
-Description=Game-aware RGB lighting (temperature by default, per-game keyboard layout when focused)
+Description=Game-aware RGB lighting (temperature telemetry and context profiles)
 After=openrgb-server.service
 Requires=openrgb-server.service
 

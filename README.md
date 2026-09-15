@@ -1,10 +1,10 @@
 # Game-aware RGB lighting
 
-Keyboard and mouse follow CPU temperature by default. When a mapped game is
-the focused window, the keyboard switches to a per-key custom layout for
-that game (e.g. WASD highlighted) instead. Motherboard (MSI MYSTIC LIGHT)
-and RAM (ENE DRAM) always follow temperature only and are never touched by
-game mode.
+Motherboard (MSI MYSTIC LIGHT) and RAM (ENE DRAM) continuously follow CPU
+temperature. When the focused context changes, keyboard and mouse briefly
+show that same temperature color and then settle on either a per-game layout
+or the configurable desktop coding layout. Game and desktop profiles never
+interrupt motherboard or RAM temperature updates.
 
 ## Why this exists / what was evaluated first
 
@@ -81,6 +81,12 @@ devices that otherwise remain in a firmware effect such as `Rainbow`, where a
 plain SDK color call can be ignored without reporting an error. Devices that
 do not advertise the configured mode are skipped with a warning.
 
+At startup, the service performs a best-effort current-window query through
+`xdotool` for XWayland applications, then listens to FocusNotifier events.
+The desktop layout is applied deterministically when the initial window cannot
+be queried. If `dbus-monitor` exits, the focus listener is restarted rather
+than silently stopping context updates.
+
 ## Bug found and fixed during live testing
 
 The first per-key layout push warned `Unknown keyboard LED name: Key: SPACE`
@@ -117,6 +123,11 @@ repeating shared key colors across games — a YAML anchor
 and merged into each game's `keys` map with `<<: *anchor_name` (or
 `<<: [*a, *b]` for more than one). Plain PyYAML feature, no code changes
 needed to add more games without repeating the movement keys every time.
+
+The example configuration also contains a low-brightness coding layout for
+the desktop: navigation and modifier keys are grouped by color while the rest
+of the keyboard remains dark blue. Edit `desktop.keyboard` and
+`desktop.mouse` without changing the service code.
 
 - **`cs2`** (matches process `cs2`): WASD green, every other key CS2
   actually uses (jump, crouch, walk, weapon slots 1-5, reload, quick-switch,
