@@ -150,3 +150,10 @@ of the keyboard remains dark blue. Edit `desktop.keyboard` and
 3. Find real LED names for a different keyboard with:
    `python3 -c "from openrgb import OpenRGBClient; c = OpenRGBClient(protocol_version=3); print([l.name for d in c.devices for l in d.leds if d.type.name == 'KEYBOARD'])"`
 4. `systemctl --user restart game-lighting.service`.
+
+## Health check
+
+Run `./health-check.sh` to validate the startup chain without printing serials
+or raw hardware identifiers. Exit codes are 0 (healthy), 1 (warning), and 2
+(error). The report separates OpenRGB service/process/SDK, CPU sensor,
+orchestrator, and udev ownership failures.
