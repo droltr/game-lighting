@@ -281,7 +281,7 @@ class ContextProfileTests(unittest.TestCase):
             "desktop": {
                 "keyboard": {
                     "base_rgb": [8, 12, 24],
-                    "keys": {"enter": [0, 220, 140]},
+                    "keys": {"enter (iso)": [0, 220, 140]},
                 },
                 "mouse": {"rgb": [20, 80, 140]},
             },
@@ -298,7 +298,7 @@ class ContextProfileTests(unittest.TestCase):
         keyboard = FakeDevice(
             DeviceType.KEYBOARD,
             "Keyboard",
-            leds=[FakeLed("Key: W"), FakeLed("Key: Enter")],
+            leds=[FakeLed("Key: W"), FakeLed("Key: Enter (ISO)")],
         )
         mouse = FakeDevice(DeviceType.MOUSE, "Mouse")
         client = MagicMock()

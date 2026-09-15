@@ -41,12 +41,12 @@ desktop:
       "left control": [0, 180, 255]
       "left shift": [0, 120, 255]
       space: [80, 140, 180]
-      enter: [0, 220, 140]
+      "enter (iso)": [0, 220, 140]
       backspace: [255, 120, 40]
-      up: [0, 200, 255]
-      down: [0, 200, 255]
-      left: [0, 200, 255]
-      right: [0, 200, 255]
+      "up arrow": [0, 200, 255]
+      "down arrow": [0, 200, 255]
+      "left arrow": [0, 200, 255]
+      "right arrow": [0, 200, 255]
   mouse:
     rgb: [20, 80, 140]
 
